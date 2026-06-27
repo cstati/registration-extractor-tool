@@ -114,26 +114,52 @@ python3 main.py input.csv output.xlsx --no-sheets
 
 ---
 
-## Blacklist
+## Filters
 
-You can block Telegram accounts from appearing in the output.  
-Open `main.py` and find the three lists at the top:
+All filtering, status mapping, sort order and colors are configured in `filters.yaml` — no need to touch the code.
 
-```python
-# Exact usernames (without @, case-insensitive)
-TG_BLACKLIST_EXACT: set[str] = {
-    "username",
-}
+```yaml
+# Colors for the "Статус регистрации" cell in the XLSX file (hex, no #)
+xlsx_colors:
+  Оплатил: 90EE90
+  Зарегистрировался: ADD8E6
+  Надо напомнить: FF6B6B
 
-# Prefixes — blocks all handles that start with this string
-TG_BLACKLIST_PREFIXES: list[str] = [
-    "spamuser",
-]
+blacklist:
+  # Exact Telegram handles (without @, case-insensitive)
+  exact:
+    - username
 
-# Regular expressions
-TG_BLACKLIST_PATTERNS: list[str] = [
-    r"test\d+",
-]
+  # Block all handles that start with these strings
+  prefixes:
+    - spamuser
+
+  # Regular expressions matched against the full handle
+  patterns:
+    - "test\\d+"
+
+# Registrations with these CSV statuses are excluded from output entirely
+status_filter:
+  exclude:
+    - Отменено
+
+# Maps original CSV status to the output label
+status_map:
+  Оплачено: Оплатил
+  Ожидает оплаты: Зарегистрировался
+  Просрочено: Надо напомнить
+
+# Output sort order (lower number = higher in the list)
+sort_order:
+  Оплачено: 0
+  Ожидает оплаты: 1
+  Просрочено: 2
+```
+
+You can also use a custom filters file:
+
+```bash
+python3 main.py input.csv output.xlsx --filters my_filters.yaml
 ```
 
 ---
@@ -181,6 +207,7 @@ TG_BLACKLIST_PATTERNS: list[str] = [
 ```
 .
 ├── main.py            # main script
+├── filters.yaml       # all filters, statuses, blacklist and colors
 ├── requirements.txt   # dependencies
 ├── .env.example       # environment variables template
 ├── .env               # your local config (never commit this)

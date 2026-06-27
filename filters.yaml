@@ -1,0 +1,35 @@
+# Colors for the "Статус регистрации" cell in the XLSX file (hex, no #)
+xlsx_colors:
+  Оплатил: 90EE90
+  Зарегистрировался: ADD8E6
+  Надо напомнить: FF6B6B
+
+blacklist:
+  # Exact Telegram handles (without @, case-insensitive)
+  exact:
+    - sem0nch1k
+    - a_rtem_sch
+
+  # Block all handles that start with these strings
+  prefixes:
+    - coranmiel
+
+  # Regular expressions matched against the full handle
+  patterns: []
+
+# Registrations with these CSV statuses are excluded from output entirely
+status_filter:
+  exclude:
+    - Отменено
+
+# Maps original CSV status to the output label
+status_map:
+  Оплачено: Оплатил
+  Ожидает оплаты: Зарегистрировался
+  Просрочено: Надо напомнить
+
+# Output sort order (lower number = higher in the list)
+sort_order:
+  Оплачено: 0
+  Ожидает оплаты: 1
+  Просрочено: 2

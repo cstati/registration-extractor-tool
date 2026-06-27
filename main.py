@@ -3,6 +3,7 @@ import csv
 import os
 import re
 import sys
+import yaml
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,38 +21,7 @@ SHEET_NAME = os.getenv("SHEET_NAME", "Sheet1")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 TOKEN_PATH = os.path.join(os.path.dirname(__file__), "token.pickle")
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
-
-# Exact handles (without @, case-insensitive)
-TG_BLACKLIST_EXACT: set[str] = {
-    "sem0nch1k",
-    "a_rtem_sch",
-}
-
-# Prefixes (handle starts with this string)
-TG_BLACKLIST_PREFIXES: list[str] = [
-    "coranmiel",
-]
-
-# Regex patterns (matched against full handle)
-TG_BLACKLIST_PATTERNS: list[str] = [
-    # r"test\d+",
-]
-
-STATUS_MAP = {
-    "Оплачено": ("Оплатил", "008000"),
-    "Ожидает оплаты": ("Зарегистрировался", "ADD8E6"),
-    "Отменено": ("Напомнили", "8B0000"),
-    "Просрочено": ("Напомнили", "8B0000"),
-    "Изменено": ("Отдали промокод", "800080"),
-}
-
-SORT_ORDER = {
-    "Оплачено": 0,
-    "Ожидает оплаты": 1,
-    "Изменено": 2,
-    "Отменено": 3,
-    "Просрочено": 4,
-}
+DEFAULT_FILTERS_PATH = os.path.join(os.path.dirname(__file__), "filters.yaml")
 
 OUTPUT_HEADERS = [
     "Статус регистрации",
@@ -74,24 +44,10 @@ OUTPUT_HEADERS = [
     "Реквизиты перевода",
 ]
 
-CSV_TO_INTERNAL = {
-    "ID регистрации": "ID регистрации",
-    "ФИО": "ФИО",
-    "Email": "Email",
-    "Telegram": "Telegram",
-    "Волна": "Волна",
-    "Билет": "Билет",
-    "Статус": "Статус",
-    "Тип оплаты": "Тип оплаты",
-    "Полная сумма": "Полная сумма",
-    "Скидка": "Скидка",
-    "Итого": "Итого",
-    "Время регистрации": "Время регистрации",
-    "Время подтверждения": "Время подтверждения",
-    "Получатель (имя)": "Получатель (имя)",
-    "Получатель (банк)": "Получатель (банк)",
-    "Реквизиты перевода": "Реквизиты перевода",
-}
+
+def load_filters(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 def parse_csv(path: str) -> list[dict]:
@@ -114,19 +70,20 @@ def deduplicate(rows: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
-def is_blacklisted(handle: str) -> bool:
+def is_blacklisted(handle: str, filters: dict) -> bool:
     tg = normalize_tg(handle)
-    if tg in TG_BLACKLIST_EXACT:
+    bl = filters.get("blacklist", {})
+    if tg in {h.lower() for h in bl.get("exact", [])}:
         return True
-    if any(tg.startswith(p.lower()) for p in TG_BLACKLIST_PREFIXES):
+    if any(tg.startswith(p.lower()) for p in bl.get("prefixes", [])):
         return True
-    if any(re.fullmatch(p, tg) for p in TG_BLACKLIST_PATTERNS):
+    if any(re.fullmatch(p, tg) for p in bl.get("patterns", [])):
         return True
     return False
 
 
-def filter_blacklist(rows: list[dict]) -> list[dict]:
-    return [row for row in rows if not is_blacklisted(row.get("Telegram", ""))]
+def filter_blacklist(rows: list[dict], filters: dict) -> list[dict]:
+    return [row for row in rows if not is_blacklisted(row.get("Telegram", ""), filters)]
 
 
 def _to_int(val: str):
@@ -136,11 +93,15 @@ def _to_int(val: str):
         return val
 
 
-def build_output_rows(rows: list[dict]) -> list[dict]:
+def build_output_rows(rows: list[dict], filters: dict) -> list[tuple]:
+    status_map = filters.get("status_map", {})
+    excluded = set(filters.get("status_filter", {}).get("exclude", []))
     out = []
     for row in rows:
         status_raw = row.get("Статус", "").strip()
-        label, _ = STATUS_MAP.get(status_raw, (status_raw, "FFFFFF"))
+        if status_raw in excluded:
+            continue
+        label = status_map.get(status_raw, status_raw)
         record = {
             "Статус регистрации": label,
             "Сайт актуален?": True,
@@ -165,7 +126,7 @@ def build_output_rows(rows: list[dict]) -> list[dict]:
     return out
 
 
-def write_xlsx(output_rows: list[tuple], path: str):
+def write_xlsx(output_rows: list[tuple], path: str, filters: dict):
     wb = Workbook()
     ws = wb.active
     ws.title = "Регистрации"
@@ -178,19 +139,17 @@ def write_xlsx(output_rows: list[tuple], path: str):
         cell.fill = header_fill
         cell.font = header_font
 
-    status_fill = {
-        "Оплачено": PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid"),
-        "Ожидает оплаты": PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid"),
-        "Отменено": PatternFill(start_color="FF6B6B", end_color="FF6B6B", fill_type="solid"),
-        "Просрочено": PatternFill(start_color="FF6B6B", end_color="FF6B6B", fill_type="solid"),
-        "Изменено": PatternFill(start_color="DDA0DD", end_color="DDA0DD", fill_type="solid"),
-    }
+    status_map = filters.get("status_map", {})
+    xlsx_colors = filters.get("xlsx_colors", {})
 
     for row_idx, (record, status_raw) in enumerate(output_rows, start=2):
+        label = status_map.get(status_raw, status_raw)
+        color_hex = xlsx_colors.get(label)
         for col, header in enumerate(OUTPUT_HEADERS, start=1):
-            cell = ws.cell(row=row_idx, column=col, value=record.get(header, ""))
-            if header == "Статус регистрации" and status_raw in status_fill:
-                cell.fill = status_fill[status_raw]
+            val = record.get(header, "")
+            cell = ws.cell(row=row_idx, column=col, value=val if val is not True else True)
+            if header == "Статус регистрации" and color_hex:
+                cell.fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
 
     wb.save(path)
 
@@ -223,7 +182,6 @@ def push_to_sheets(output_rows: list[tuple]):
     service = build("sheets", "v4", credentials=creds)
     sheet = service.spreadsheets()
 
-    # Clear the sheet first
     sheet.values().clear(
         spreadsheetId=SPREADSHEET_ID,
         range=SHEET_NAME,
@@ -244,10 +202,8 @@ def push_to_sheets(output_rows: list[tuple]):
         body={"values": values},
     ).execute()
 
-    # Apply background colors via batchUpdate
     requests = []
 
-    # Find sheet ID
     meta = sheet.get(spreadsheetId=SPREADSHEET_ID).execute()
     sheet_id = None
     for s in meta["sheets"]:
@@ -259,8 +215,6 @@ def push_to_sheets(output_rows: list[tuple]):
         print(f"Лист '{SHEET_NAME}' не найден в таблице.", file=sys.stderr)
         return
 
-
-    # Checkbox for column B (Сайт актуален?)
     requests.append({
         "setDataValidation": {
             "range": {
@@ -291,19 +245,27 @@ def main():
     parser.add_argument("input", help="Путь к входному CSV файлу")
     parser.add_argument("output", help="Путь к выходному XLSX файлу")
     parser.add_argument(
+        "--filters",
+        default=DEFAULT_FILTERS_PATH,
+        help="Путь к YAML файлу с фильтрами (по умолчанию: filters.yaml)",
+    )
+    parser.add_argument(
         "--no-sheets",
         action="store_true",
         help="Не загружать данные в Google Sheets",
     )
     args = parser.parse_args()
 
-    rows = parse_csv(args.input)
-    rows = filter_blacklist(rows)
-    rows = deduplicate(rows)
-    output_rows = build_output_rows(rows)
-    output_rows.sort(key=lambda x: SORT_ORDER.get(x[1], 99))
+    filters = load_filters(args.filters)
+    sort_order = filters.get("sort_order", {})
 
-    write_xlsx(output_rows, args.output)
+    rows = parse_csv(args.input)
+    rows = filter_blacklist(rows, filters)
+    rows = deduplicate(rows)
+    output_rows = build_output_rows(rows, filters)
+    output_rows.sort(key=lambda x: sort_order.get(x[1], 99))
+
+    write_xlsx(output_rows, args.output, filters)
     print(f"XLSX сохранён: {args.output} ({len(output_rows)} строк)")
 
     if not args.no_sheets:

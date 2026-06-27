@@ -1,81 +1,112 @@
-# Registrations Processor
+# registration-extractor-tool
 
-Скрипт для обработки экспорта регистраций на мероприятие из CSV.  
-Очищает дубли, применяет блэклист, сортирует по статусу, экспортирует в XLSX и синхронизирует с Google Таблицей.
-
----
-
-## Что делает
-
-1. Парсит CSV-выгрузку регистраций (кодировка UTF-8 BOM, разделитель `;`)
-2. Отсеивает Telegram-аккаунты из блэклиста (точные совпадения, префиксы, регулярки)
-3. Дедуплицирует по ФИО — оставляет самую новую заявку
-4. Сортирует: Оплатил → Зарегистрировался → Отдали промокод → Напомнили
-5. Сохраняет XLSX с заголовками и цветом статусной ячейки
-6. Обновляет лист Google Таблицы: очищает, пишет данные, ставит чекбоксы в колонку «Сайт актуален?»
+A tool to extract, clean and sync event registrations from CSV exports to Google Sheets.
 
 ---
 
-## Требования
+## What it does
 
-- Python 3.10+
-- Аккаунт Google с доступом к целевой таблице
-- Проект в Google Cloud Console с включённым Google Sheets API
+1. Reads a CSV file exported from your registration system
+2. Removes duplicate registrations (keeps the most recent one per person)
+3. Filters out blocked Telegram accounts (blacklist)
+4. Sorts registrations by payment status
+5. Saves the result as an XLSX file
+6. Uploads the data to a Google Sheet with checkboxes
 
 ---
 
-## Установка
+## Requirements
+
+- Python 3.10 or higher
+- A Google account with access to your Google Sheet
+- A Google Cloud project with the Google Sheets API enabled
+
+---
+
+## Setup
+
+### 1. Clone the repository
 
 ```bash
 git clone <repo-url>
-cd <repo>
+cd registration-extractor-tool
+```
+
+### 2. Create a virtual environment and install dependencies
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+### 3. Set up Google Sheets API
 
-## Настройка Google API
+**Step 1. Create a Google Cloud project**
 
-### 1. Создать проект в Google Cloud Console
+- Go to [console.cloud.google.com](https://console.cloud.google.com)
+- Click the project dropdown at the top → **New Project**
+- Give it any name, click **Create**
+- Make sure the new project is selected in the dropdown
 
-Зайди на [console.cloud.google.com](https://console.cloud.google.com), создай новый проект.
+**Step 2. Enable the Google Sheets API**
 
-### 2. Включить Google Sheets API
+- In the left menu go to **APIs & Services → Library**
+- Search for **Google Sheets API**
+- Click on it and press **Enable**
 
-APIs & Services → Library → найди **Google Sheets API** → Enable.
+**Step 3. Configure the OAuth consent screen**
 
-### 3. Создать OAuth 2.0 credentials
+- Go to **APIs & Services → OAuth consent screen**
+- Choose **External** and click **Create**
+- Fill in the **App name** (anything) and your **Gmail** as the support email
+- Scroll to the bottom and click **Save and Continue** through all steps
+- On the last step (**Test users**) click **+ Add users** and add your Gmail address
+- Click **Save and Continue**
 
-APIs & Services → Credentials → Create Credentials → **OAuth 2.0 Client ID** → Desktop app.  
-Скачай JSON и сохрани как `credentials.json` в корне проекта.
+**Step 4. Create OAuth credentials**
 
-### 4. Добавить тестового пользователя
+- Go to **APIs & Services → Credentials**
+- Click **+ Create Credentials → OAuth 2.0 Client ID**
+- Choose **Desktop app** as the application type
+- Click **Create**
+- Click the **Download JSON** button (the download icon on the right)
+- Rename the downloaded file to `credentials.json`
+- Move it to the project folder (next to `main.py`)
 
-APIs & Services → OAuth consent screen → Test users → Add users → укажи свой Gmail.
+### 4. Configure the project
 
-### 5. Указать таблицу в скрипте
+Copy the example env file and fill in your values:
 
-В `main.py` найди константы в начале файла:
-
-```python
-SPREADSHEET_ID = "..."   # ID из URL таблицы: /d/<ID>/edit
-SHEET_NAME = "..."       # Название листа
+```bash
+cp .env.example .env
 ```
 
+Open `.env` and set:
+
+```
+SPREADSHEET_ID=your_spreadsheet_id_here
+SHEET_NAME=your_sheet_name_here
+```
+
+You can find the Spreadsheet ID in the URL of your Google Sheet:  
+`https://docs.google.com/spreadsheets/d/THIS_IS_THE_ID/edit`
+
 ---
 
-## Использование
+## Usage
 
 ```bash
 source venv/bin/activate
-python3 main.py <путь_к_файлу.csv> <путь_к_output.xlsx>
+python3 main.py input.csv output.xlsx
 ```
 
-При первом запуске откроется браузер для авторизации. Токен сохранится в `token.pickle` — повторная авторизация не потребуется.
+On the first run, a browser window will open asking you to log in to Google and grant access.  
+After that, the token is saved to `token.pickle` and you won't need to log in again.
 
-Флаг `--no-sheets` — только XLSX, без загрузки в Google Таблицу:
+### Skip Google Sheets upload
+
+If you only want the XLSX file without uploading to Google Sheets:
 
 ```bash
 python3 main.py input.csv output.xlsx --no-sheets
@@ -83,71 +114,83 @@ python3 main.py input.csv output.xlsx --no-sheets
 
 ---
 
-## Блэклист Telegram
+## Blacklist
 
-В начале `main.py` три списка:
+You can block Telegram accounts from appearing in the output.  
+Open `main.py` and find the three lists at the top:
 
 ```python
-# Точные совпадения (без @, регистр не важен)
+# Exact usernames (without @, case-insensitive)
 TG_BLACKLIST_EXACT: set[str] = {
     "username",
 }
 
-# Префиксы — блокирует все ники, начинающиеся с префикса
+# Prefixes — blocks all handles that start with this string
 TG_BLACKLIST_PREFIXES: list[str] = [
-    "testuser",
+    "spamuser",
 ]
 
-# Регулярные выражения
+# Regular expressions
 TG_BLACKLIST_PATTERNS: list[str] = [
-    r"spam\d+",
+    r"test\d+",
 ]
 ```
 
 ---
 
-## Структура выходной таблицы
+## Output columns
 
-| Колонка | Описание |
+| Column | Description |
 |---|---|
-| Статус регистрации | Метка статуса: Оплатил / Зарегистрировался / Напомнили / Отдали промокод |
-| Сайт актуален? | Чекбокс для ручной отметки |
-| ID регистрации | UUID заявки |
-| ФИО | Полное имя участника |
-| Email | Электронная почта |
-| Telegram | Telegram-хендл |
-| Волна | Волна регистрации |
-| Билет | Тип билета |
-| Статус | Оригинальный статус из системы (Оплачено / Ожидает оплаты / Отменено / Просрочено / Изменено) |
-| Тип оплаты | Способ оплаты |
-| Полная сумма | Сумма до скидки (число) |
-| Скидка | Размер скидки (число) |
-| Итого | Итоговая сумма к оплате (число) |
-| Время регистрации | Дата и время подачи заявки |
-| Время подтверждения | Дата и время подтверждения оплаты |
-| Получатель (имя) | Имя получателя перевода |
-| Получатель (банк) | Банк получателя |
-| Реквизиты перевода | Номер карты или телефона |
+| Статус регистрации | Mapped status: Оплатил / Зарегистрировался / Напомнили / Отдали промокод |
+| Сайт актуален? | Checkbox (checked by default) |
+| ID регистрации | Registration UUID |
+| ФИО | Full name |
+| Email | Email address |
+| Telegram | Telegram handle |
+| Волна | Registration wave |
+| Билет | Ticket type |
+| Статус | Original status from CSV |
+| Тип оплаты | Payment method |
+| Полная сумма | Full price |
+| Скидка | Discount |
+| Итого | Total amount due |
+| Время регистрации | Registration timestamp |
+| Время подтверждения | Payment confirmation timestamp |
+| Получатель (имя) | Transfer recipient name |
+| Получатель (банк) | Recipient bank |
+| Реквизиты перевода | Card or phone number |
 
-### Маппинг статусов
+### Status mapping
 
-| Статус в CSV | Статус регистрации |
+| CSV status | Output status |
 |---|---|
 | Оплачено | Оплатил |
 | Ожидает оплаты | Зарегистрировался |
-| Отменено | Напомнили |
-| Просрочено | Напомнили |
-| Изменено | Отдали промокод |
+| Просрочено | Надо напомнить |
+| Отменено | filtered out, not included in output |
+
+### Sort order
+
+Оплатил → Зарегистрировался → Надо напомнить
 
 ---
 
-## Файлы в проекте
+## Project structure
 
 ```
 .
-├── main.py              # основной скрипт
-├── requirements.txt     # зависимости
-├── credentials.json     # OAuth credentials (не коммитить!)
-├── token.pickle         # OAuth токен (генерируется автоматически, не коммитить!)
+├── main.py            # main script
+├── requirements.txt   # dependencies
+├── .env.example       # environment variables template
+├── .env               # your local config (never commit this)
+├── credentials.json   # Google OAuth credentials (never commit this)
+├── token.pickle       # auto-generated after first login (never commit this)
 └── .gitignore
 ```
+
+---
+
+## Security
+
+Never commit `.env`, `credentials.json` or `token.pickle` — they contain your personal access tokens and API secrets. They are already listed in `.gitignore`.

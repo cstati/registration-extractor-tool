@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+
+# Google OAuth token — содержит персональные токены доступа
+token.pickle
+
+# Google credentials — никогда не коммитить
+credentials.json
+
+# Env с секретами
+.env
+
+# Данные
+*.csv
+*.xlsx
